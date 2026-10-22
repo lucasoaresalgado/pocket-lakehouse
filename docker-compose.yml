@@ -1,0 +1,117 @@
+# Study-only Spark standalone cluster (~10 GB RAM ceiling, ~1.3 GB idle; see README section 8).
+# The project name is pinned to `spark` so the Docker network and container names do not depend on the folder name.
+name: spark
+
+x-spark: &spark
+  build: .
+  image: spark-study:3.5.9
+  env_file: [s3.env]   # MinIO AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (see s3.env.example; not in git)
+  volumes:
+    - ./conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+    - ./data:/data
+    - ./apps:/apps
+    - ./event-logs:/spark-events
+  networks: [spark]
+
+services:
+  # S3-compatible lake. Hard disk limit = bucket quota, applied by scripts/init-minio.sh (the data dir itself is not capped).
+  minio:
+    image: cgr.dev/chainguard/minio:latest
+    container_name: minio
+    command: ["server", "/data", "--console-address", ":9001"]
+    env_file: [minio.env]   # MINIO_ROOT_USER / MINIO_ROOT_PASSWORD (see minio.env.example)
+    user: "65532:65532"
+    volumes:
+      - ./minio-data:/data
+    ports:
+      - "127.0.0.1:9000:9000"   # S3 API
+      - "127.0.0.1:9001:9001"   # web console
+    mem_limit: 512m
+    networks: [spark]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  spark-master:
+    <<: *spark
+    container_name: spark-master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    environment:
+      SPARK_MASTER_HOST: spark-master
+      SPARK_DAEMON_MEMORY: 256m
+    ports: ["8090:8080", "7077:7077"]
+    mem_limit: 512m
+
+  spark-worker-1: &worker
+    <<: *spark
+    container_name: spark-worker-1
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    environment:
+      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_MEMORY: 2g
+      SPARK_DAEMON_MEMORY: 256m
+      SPARK_WORKER_WEBUI_PORT: 8081
+    ports: ["8091:8081"]
+    mem_limit: 2560m
+    depends_on: [spark-master]
+
+  spark-worker-2:
+    <<: *worker
+    container_name: spark-worker-2
+    environment:
+      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_MEMORY: 2g
+      SPARK_DAEMON_MEMORY: 256m
+      SPARK_WORKER_WEBUI_PORT: 8082
+    ports: ["8092:8082"]
+
+  spark-history:
+    <<: *spark
+    container_name: spark-history
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.history.HistoryServer
+    environment:
+      SPARK_DAEMON_MEMORY: 384m
+    ports: ["18080:18080"]
+    mem_limit: 640m
+
+  # Driver / submit container: run your extraction jobs from here (client mode).
+  spark-client:
+    <<: *spark
+    container_name: spark-client
+    command: sleep infinity
+    environment:
+      SPARK_LOCAL_HOSTNAME: spark-client
+    ports: ["4040:4040"]
+    mem_limit: 1536m
+    depends_on: [spark-master]
+
+  # JupyterLab with PySpark (client mode). Limited to 2 cores so it can coexist with spark-client jobs.
+  spark-jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile.jupyter
+    image: spark-study-jupyter:3.5.9
+    container_name: spark-jupyter
+    env_file: [s3.env]
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --ServerApp.token='' --ServerApp.password=''
+    environment:
+      SPARK_LOCAL_HOSTNAME: spark-jupyter
+      STORAGE: s3          # pipeline tables go to MinIO (bucket lake); local-disk storage is disabled
+      S3_BUCKET: lake
+      S3_ENDPOINT: http://minio:9000
+    volumes:
+      - ./conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - ./data:/data
+      - ./notebooks:/notebooks
+      - ./event-logs:/spark-events
+    ports: ["127.0.0.1:8888:8888", "127.0.0.1:4041:4040"]
+    mem_limit: 2g
+    networks: [spark]
+    depends_on:
+      spark-master: {condition: service_started}
+      minio: {condition: service_healthy}
+
+networks:
+  spark:

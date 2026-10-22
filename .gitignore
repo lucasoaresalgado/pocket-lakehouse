@@ -1,0 +1,14 @@
+# runtime data
+data/
+event-logs/
+minio-data/
+
+# credentials (copy the *.example files)
+s3.env
+minio.env
+
+# notebooks / python noise
+.ipynb_checkpoints/
+.Trash-*/
+__pycache__/
+*.pyc

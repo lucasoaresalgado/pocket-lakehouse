@@ -1,0 +1,9 @@
+FROM spark-study:3.5.9
+USER root
+RUN pip install --no-cache-dir jupyterlab pandas pyarrow matplotlib s3fs duckdb
+ENV HOME=/home/spark \
+    PYTHONPATH=/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9.7-src.zip \
+    PYSPARK_PYTHON=python3
+RUN mkdir -p /notebooks /home/spark && chown spark:spark /notebooks /home/spark
+USER spark
+WORKDIR /notebooks
