@@ -57,9 +57,10 @@ It is deliberately **monolithic**: one repository, one `docker compose` stack, o
         │ ANM  CFEM  AMB  SCM  SIGBM  DIPEM    │   │ spark-jupyter ──► Spark (master + 2 workers) │
         │ ANP  well production                 │──►│       │  pandas / DuckDB / pipelines/        │
         │ IBGE municipalities (API)            │   │       ▼  S3A                                 │
-        └──────────────────────────────────────┘   │     MinIO  bucket "lake"  (quota 5 GiB)      │
-                                                   │       └─ estudo/<table>/*.parquet, _ctl/     │
-                                                   └──────────────────────────────────────────────┘
+        │ CPTEC MERGE (GRIB2)  NASA POWER      │   │     MinIO  bucket "lake"  (quota 5 GiB)      │
+        │ RF CNPJ  CVM  PGFN  CGU  MTE         │   │       └─ estudo/<table>/*.parquet, _ctl/     │
+        │ PNCP (API / CSV)  CAGED (FTP)        │   └──────────────────────────────────────────────┘
+        └──────────────────────────────────────┘
 ```
 
 | Stage | Tools |
@@ -78,7 +79,7 @@ pocket-lakehouse/
 ├── README.md                    this file
 ├── docker-compose.yml           the whole stack: MinIO + Spark cluster + JupyterLab
 ├── Dockerfile                   Spark image (JDBC drivers for SQL Server/Postgres/MySQL; S3A for MinIO)
-├── Dockerfile.jupyter           Jupyter image (JupyterLab, pandas, pyarrow, matplotlib, s3fs, DuckDB)
+├── Dockerfile.jupyter           Jupyter image (JupyterLab, pandas, pyarrow, matplotlib, s3fs, DuckDB, openpyxl, py7zr)
 ├── conf/spark-defaults.conf     Spark and S3A connector configuration
 ├── scripts/init-minio.sh        creates the bucket and applies the quota (idempotent)
 ├── minio.env / s3.env           credentials (git-ignored; copy the *.example files)
@@ -87,7 +88,10 @@ pocket-lakehouse/
 ├── minio-data/                  where MinIO keeps its objects (git-ignored)
 ├── event-logs/                  Spark event logs (feed the history server)
 └── notebooks/                   mounted at /notebooks in Jupyter — one folder per category
-    └── mineracao/               category: mining & oil public data (see its README)
+    ├── lakehouse/               shared code of the newer categories: storage, _ctl, HTTP, size guard (core.py)
+    ├── mineracao/               category: mining & oil public data (see its README)
+    ├── clima/                   category: daily rain and weather per municipality (MERGE, NASA POWER, IBGE)
+    └── empresas/                category: companies — CNPJ, CVM, PGFN, CGU, MTE, PNCP, CAGED
 ```
 
 ---
@@ -187,14 +191,20 @@ Current categories:
 | Category | What it holds |
 |---|---|
 | [`mineracao`](notebooks/mineracao/README.md) | ANM / ANP public data (mining and oil): six PySpark pipelines, tests, and an analysis notebook |
+| [`clima`](notebooks/clima/README.md) | daily rain/weather per IBGE municipality: CPTEC MERGE (GRIB2), NASA POWER, IBGE centroids |
+| [`empresas`](notebooks/empresas/README.md) | companies: RF CNPJ, CVM statements, PGFN debtors, CGU sanctions, MTE Lista Suja, PNCP procurement, Novo CAGED |
+
+`clima` and `empresas` share `notebooks/lakehouse/core.py` (their `pipelines/__init__.py` puts `notebooks/` on the path);
+`mineracao` predates it and keeps its own `pipelines/common.py`.
 
 ---
 
 ## 6. Storage: MinIO and the disk quota
 
 - Single bucket: **`lake`**. Each pipeline writes to `s3a://lake/<target_db>/<table>/`.
-- **`target_db` is not a database**: it is only a **prefix (folder)** inside the bucket. The real data of this project is in
-  `s3a://lake/estudo/`.
+- **`target_db` is not a database**: it is only a **folder (prefix)** inside the bucket. Every pipeline defaults to
+  `target_db="estudo"`, so a plain run writes to `s3a://lake/estudo/<table>/` — where the project's data lives. Pass
+  another name (e.g. `target_db="teste"`) to keep a trial load apart, then delete that folder.
 - **Hard 5 GiB quota** on the bucket. Without sudo a fixed-size partition cannot be created on the host, so the limit is
   MinIO's native quota: uploads beyond it fail with `Bucket quota exceeded` (tested). To change it:
   `QUOTA=10GiB ./scripts/init-minio.sh`.
@@ -203,6 +213,10 @@ Current categories:
   size for a few moments.
 - Tables are stored **only in MinIO**. Writing tables to local disk is disabled (the code refuses `STORAGE=file`; only the offline tests enable it).
 - Current use with all the real data: ~139 MiB.
+- **Size guards (clima, empresas):** each pipeline estimates its write before downloading and refuses one that would not fit
+  in the free quota (`ignorar_cota=True` skips the estimate; `QUOTA_GIB` tells the code the quota if you change it). If the
+  hard quota still stops a write, the stage is removed and the live table is kept. Sources that do **not** fit whole: the
+  RF CNPJ release (~7 GB zipped — load with `ufs`/`parts`) and the full Novo CAGED history (~80 MB per month).
 
 ---
 
@@ -218,6 +232,7 @@ Current categories:
 | `CONTACT_EMAIL` | — | optional: added to the `User-Agent` of the download requests so publishers can reach you; set it in `s3.env` |
 | `PAUSA_S` | `3` | pause (seconds) between requests to the same publisher |
 | `KEEP_RAW` | — | `1` keeps the downloads in `data/raw` after a run |
+| `QUOTA_GIB` | `5` | bucket quota assumed by the size guards of `clima`/`empresas` (keep it equal to the `init-minio.sh` quota) |
 
 ---
 

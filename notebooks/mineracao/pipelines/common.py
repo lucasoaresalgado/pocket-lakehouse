@@ -696,7 +696,7 @@ class Foco:
 
 
 def pick_cfg_db(cfg_db: str, target_db: str, tables: Sequence[str] = ("dim_alvoExtracao", "dim_substanciaMineral")) -> str:
-    for db in [d for d in (cfg_db, target_db, "silver") if d]:
+    for db in [d for d in (cfg_db, target_db) if d]:
         if any(table_exists(db, t) for t in tables):
             return db
     return ""

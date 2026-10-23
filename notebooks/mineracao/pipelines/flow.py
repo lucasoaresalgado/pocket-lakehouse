@@ -34,11 +34,11 @@ def _resumo(branch) -> dict:
 
 
 def run_flow(spark: Optional[SparkSession] = None, mode: str = "incremental", reference_date: str = "", start_date: str = "",
-             end_date: str = "", force: bool = False, target_db: str = "bronze", cfg_db: str = "", dry_run: bool = False,
+             end_date: str = "", force: bool = False, target_db: str = "estudo", cfg_db: str = "", dry_run: bool = False,
              parallel: bool = False) -> List[dict]:
     if mode not in ("incremental", "range", "backfill"):
         raise ValueError("invalid mode: %s" % mode)
-    target_db = target_db or "bronze"
+    target_db = target_db or "estudo"
     common = dict(spark=spark, force=force, dry_run=dry_run, target_db=target_db, cfg_db=cfg_db or "")
     janela = dict(mode=mode, reference_date=reference_date or "", start_date=start_date or "", end_date=end_date or "")
     snap_mode = "backfill" if mode == "backfill" else "incremental"

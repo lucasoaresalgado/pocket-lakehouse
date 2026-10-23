@@ -23,7 +23,7 @@ from pipelines import amb, anp, cfem, common as C, dipem, flow, scm, sigbm
 
 ROOT = os.environ["DATA_ROOT"]
 FIX = os.path.join(ROOT, "fixtures")
-DB = "t_bronze"
+DB = "t_estudo"
 
 
 def write(name, text, enc="utf-8"):

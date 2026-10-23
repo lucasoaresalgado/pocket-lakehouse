@@ -1,6 +1,8 @@
 FROM spark-study:3.5.9
 USER root
 RUN pip install --no-cache-dir jupyterlab pandas pyarrow matplotlib s3fs duckdb
+# empresas category: MTE spreadsheet (xlsx) and CAGED archives (7z)
+RUN pip install --no-cache-dir openpyxl py7zr
 ENV HOME=/home/spark \
     PYTHONPATH=/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9.7-src.zip \
     PYSPARK_PYTHON=python3

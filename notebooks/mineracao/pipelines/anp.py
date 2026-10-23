@@ -168,7 +168,7 @@ def main(spark: Optional[SparkSession] = None, mode: str = "incremental", refere
          end_date: str = "", lookback_meses: int = 3, max_periodos: int = 12, pagina: str = PAGINA_PADRAO,
          url_filtro: str = "po[cç]o|producao|produ[cç][aã]o", urls: Optional[List[str]] = None, force: bool = False,
          reset_cursor: bool = False, excluir_presal: bool = True, profile: bool = False, dry_run: bool = False,
-         target_db: str = "bronze", cfg_db: str = ""):
+         target_db: str = "estudo", cfg_db: str = ""):
     t0 = time.time()
     if mode not in ("incremental", "range", "backfill"):
         raise ValueError("invalid mode: %s" % mode)
@@ -179,7 +179,7 @@ def main(spark: Optional[SparkSession] = None, mode: str = "incremental", refere
     pagina = pagina or PAGINA_PADRAO
 
     cfg = ""
-    for db in [d for d in (cfg_db, target_db, "silver") if d]:
+    for db in [d for d in (cfg_db, target_db) if d]:
         if C.table_exists(db, "dim_alvoExtracao"):
             cfg = db
             break

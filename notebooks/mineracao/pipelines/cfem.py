@@ -57,7 +57,7 @@ def _faltam(idx) -> List[str]:
 
 def main(spark: Optional[SparkSession] = None, mode: str = "incremental", reference_date: str = "", start_date: str = "",
          end_date: str = "", lookback_meses: int = 6, urls: Optional[List[str]] = None, incluir_p3: bool = True,
-         force: bool = False, profile: bool = False, dry_run: bool = False, target_db: str = "bronze", cfg_db: str = ""):
+         force: bool = False, profile: bool = False, dry_run: bool = False, target_db: str = "estudo", cfg_db: str = ""):
     t0 = time.time()
     if mode not in ("incremental", "range", "backfill"):
         raise ValueError("invalid mode: %s" % mode)

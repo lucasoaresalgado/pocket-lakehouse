@@ -97,8 +97,9 @@ Individuals (PF) are **never** stored with identification:
 Common parameters: `reference_date`, `start_date`, `end_date` (YYYY-MM or YYYY-MM-DD), `force` (ignores ETag), `target_db`
 (prefix in the bucket), `cfg_db`.
 
-> **`target_db` is not a database.** It is just a **prefix (folder)** inside the bucket, playing the role a schema
-> (`bronze`, `silver`…) plays in a warehouse. The real data lives in `s3a://lake/estudo/`.
+> **`target_db` is not a database.** It is just a **folder (prefix)** inside the bucket `lake`: a run with
+> `target_db="estudo"` (the default) writes to `s3a://lake/estudo/<table>/`. Use another name to keep test loads apart
+> (e.g. `target_db="teste"` → `lake/teste/`), and delete that folder when you are done.
 
 ---
 
