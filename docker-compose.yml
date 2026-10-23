@@ -28,6 +28,7 @@ services:
       - "127.0.0.1:9001:9001"   # web console
     mem_limit: 512m
     networks: [spark]
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 5s
@@ -38,6 +39,7 @@ services:
     <<: *spark
     container_name: spark-master
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    restart: unless-stopped
     environment:
       SPARK_MASTER_HOST: spark-master
       SPARK_DAEMON_MEMORY: 256m
@@ -48,6 +50,7 @@ services:
     <<: *spark
     container_name: spark-worker-1
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    restart: unless-stopped
     environment:
       SPARK_WORKER_CORES: 2
       SPARK_WORKER_MEMORY: 2g
@@ -60,6 +63,7 @@ services:
   spark-worker-2:
     <<: *worker
     container_name: spark-worker-2
+    restart: unless-stopped
     environment:
       SPARK_WORKER_CORES: 2
       SPARK_WORKER_MEMORY: 2g
@@ -71,6 +75,7 @@ services:
     <<: *spark
     container_name: spark-history
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.history.HistoryServer
+    restart: unless-stopped
     environment:
       SPARK_DAEMON_MEMORY: 384m
     ports: ["18080:18080"]
@@ -81,6 +86,7 @@ services:
     <<: *spark
     container_name: spark-client
     command: sleep infinity
+    restart: unless-stopped
     environment:
       SPARK_LOCAL_HOSTNAME: spark-client
     ports: ["4040:4040"]
@@ -96,6 +102,7 @@ services:
     container_name: spark-jupyter
     env_file: [s3.env]
     command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --ServerApp.token='' --ServerApp.password=''
+    restart: unless-stopped
     environment:
       SPARK_LOCAL_HOSTNAME: spark-jupyter
       STORAGE: s3          # pipeline tables go to MinIO (bucket lake); local-disk storage is disabled
