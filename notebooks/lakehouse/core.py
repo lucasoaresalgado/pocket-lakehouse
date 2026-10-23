@@ -24,7 +24,7 @@ from pyspark import StorageLevel
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-os.umask(0) 
+os.umask(0) # this and fs.permissions.umask-mode=000 -> Everything recorded gets open access permission, so one container doesn't generate files another can't erase.
 
 DATA_ROOT = os.environ.get("DATA_ROOT", "/data")
 STORAGE = os.environ.get("STORAGE", "s3")        # always MinIO ("s3"); "file" exists only for the offline tests
