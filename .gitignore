@@ -12,3 +12,7 @@ minio.env
 .Trash-*/
 __pycache__/
 *.pyc
+
+# deploy switches and the MCP write credentials
+.env
+mcp-access-1.env

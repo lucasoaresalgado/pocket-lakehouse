@@ -13,6 +13,14 @@ x-spark: &spark
     - ./event-logs:/spark-events
   networks: [spark]
 
+# Bash-only HTTP probe (the Spark image does not guarantee curl): healthy when GET / on the given port answers 2xx/3xx.
+# Docker only *marks* a container unhealthy; the `autoheal` service below is what restarts it.
+x-http-health: &http-health
+  interval: 15s
+  timeout: 5s
+  retries: 3
+  start_period: 30s
+
 services:
   # S3-compatible lake. Hard disk limit = bucket quota, applied by scripts/init-minio.sh (the data dir itself is not capped).
   minio:
@@ -45,6 +53,9 @@ services:
       SPARK_DAEMON_MEMORY: 256m
     ports: ["8090:8080", "7077:7077"]
     mem_limit: 512m
+    healthcheck:
+      <<: *http-health
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET / HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -qE ' (2|3)[0-9][0-9] '"]
 
   spark-worker-1: &worker
     <<: *spark
@@ -59,6 +70,9 @@ services:
     ports: ["8091:8081"]
     mem_limit: 2560m
     depends_on: [spark-master]
+    healthcheck:
+      <<: *http-health
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8081 && printf 'GET / HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -qE ' (2|3)[0-9][0-9] '"]
 
   spark-worker-2:
     <<: *worker
@@ -70,6 +84,9 @@ services:
       SPARK_DAEMON_MEMORY: 256m
       SPARK_WORKER_WEBUI_PORT: 8082
     ports: ["8092:8082"]
+    healthcheck:
+      <<: *http-health
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8082 && printf 'GET / HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -qE ' (2|3)[0-9][0-9] '"]
 
   spark-history:
     <<: *spark
@@ -80,6 +97,9 @@ services:
       SPARK_DAEMON_MEMORY: 384m
     ports: ["18080:18080"]
     mem_limit: 640m
+    healthcheck:
+      <<: *http-health
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/18080 && printf 'GET / HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -qE ' (2|3)[0-9][0-9] '"]
 
   # Driver / submit container: run your extraction jobs from here (client mode).
   spark-client:
@@ -116,8 +136,55 @@ services:
     ports: ["127.0.0.1:8888:8888", "127.0.0.1:4041:4040"]
     mem_limit: 2g
     networks: [spark]
+    healthcheck:
+      <<: *http-health
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8888 && printf 'GET /api HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -qE ' (2|3)[0-9][0-9] '"]
     depends_on:
       spark-master: {condition: service_started}
+      minio: {condition: service_healthy}
+
+  # Restarts any container whose healthcheck reports `unhealthy` (restart: unless-stopped only covers exits/crashes).
+  # Needs the Docker socket: that is root-equivalent on the host, so the service is localhost-only, has no ports, and is pinned.
+  # Opt-in: deployed only with AUTOHEAL_ACTIVE=1 (see .env.example); with 0 `up -d` also removes a running one.
+  autoheal:
+    scale: ${AUTOHEAL_ACTIVE:-0}
+    image: willfarrell/autoheal:1.2.0
+    container_name: autoheal
+    restart: unless-stopped
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: all
+      AUTOHEAL_INTERVAL: 10
+      AUTOHEAL_START_PERIOD: 60
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    mem_limit: 32m
+    networks: [spark]
+
+  # MCP server (Streamable HTTP, http://127.0.0.1:8765/mcp) over the Parquet tables in MinIO. Opt-in: MCP_ACTIVE=1.
+  # Read-only by default: with MCP_EDIT_ACCESS=0 it gets mcp-access-0.env (a MinIO user that can only read the bucket);
+  # with 1 it gets mcp-access-1.env (can also write/delete in the bucket). Both users come from scripts/init-minio.sh.
+  mcp:
+    build: ./mcp
+    image: spark-study-mcp:1
+    container_name: mcp
+    scale: ${MCP_ACTIVE:-0}
+    restart: unless-stopped
+    env_file:
+      - path: ./mcp-access-${MCP_EDIT_ACCESS:-0}.env
+        required: false
+    environment:
+      MCP_EDIT_ACCESS: ${MCP_EDIT_ACCESS:-0}
+      S3_BUCKET: lake
+      S3_ENDPOINT: http://minio:9000
+    ports: ["127.0.0.1:${MCP_PORT:-8765}:8765"]
+    read_only: true
+    tmpfs: [/tmp:size=256m]   # DuckDB spill
+    mem_limit: 768m
+    networks: [spark]
+    healthcheck:
+      <<: *http-health
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8765), 3)"]
+    depends_on:
       minio: {condition: service_healthy}
 
 networks:

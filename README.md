@@ -109,6 +109,8 @@ Everything is in `docker-compose.yml` (project name `spark`, network `spark_spar
 | `spark-history` | shows finished jobs (reads `event-logs/`) | **18080** | 640 MB |
 | `spark-client` | container for `spark-submit` (client mode / driver) | 4040 (job UI) | 1.5 GB |
 | `spark-jupyter` | JupyterLab with PySpark; the notebooks run from here | **8888**, 4041 (job UI) | 2 GB |
+| `autoheal` | restarts containers that turn `unhealthy` — **opt-in**, `AUTOHEAL_ACTIVE=1` | — | 32 MB |
+| `mcp` | MCP server over the lake — **opt-in**, `MCP_ACTIVE=1` (see [section 4.1](#41-optional-services-autoheal-and-mcp)) | **8765** (`127.0.0.1`) | 768 MB |
 
 The Spark UIs are published on host ports 8090–8092 so they do not clash with other local services on 8080/8081.
 
@@ -159,6 +161,41 @@ Quick cluster test:
 docker exec spark-client /opt/spark/bin/spark-submit --master spark://spark-master:7077 /apps/smoke_test.py   # computation
 docker exec spark-client /opt/spark/bin/spark-submit --master spark://spark-master:7077 /apps/s3_smoke.py    # writes/reads MinIO
 ```
+
+### 4.1 Optional services: autoheal and MCP
+
+Two services are off unless you switch them on. The switches are read by `docker compose up -d` from the shell or from a
+`.env` file (copy `.env.example`); unset means `0`. Setting a switch back to `0` and running `up -d` removes the container.
+
+| Switch | Default | Effect |
+|---|---|---|
+| `AUTOHEAL_ACTIVE` | `0` | `1` deploys `autoheal` (needs the Docker socket, which is root-equivalent on the host, hence opt-in) |
+| `MCP_ACTIVE` | `0` | `1` deploys the MCP server at `http://127.0.0.1:8765/mcp` (Streamable HTTP) |
+| `MCP_EDIT_ACCESS` | `0` | only with `MCP_ACTIVE=1`. `0` = **read-only**; `1` = the agent may also write and delete in the bucket |
+
+```bash
+./scripts/init-minio.sh                       # once (re-run is safe): also creates the MCP users below
+MCP_ACTIVE=1 docker compose up -d --build     # or put MCP_ACTIVE=1 in .env
+claude mcp add --transport http lakehouse http://127.0.0.1:8765/mcp
+```
+
+**Tools:** `list_tables`, `describe_table`, `query` (DuckDB SQL over the Parquet, e.g.
+`SELECT … FROM read_parquet('s3://lake/estudo/<table>/**/*.parquet', hive_partitioning=true)`), `lake_usage` (bucket use
+against the quota). With `MCP_EDIT_ACCESS=1` there is also `delete_table`, and `query` accepts any statement
+(`COPY … TO 's3://lake/…'`, `CREATE`, …).
+
+**Credentials.** `init-minio.sh` creates two MinIO users, each with a policy limited to the one bucket:
+
+| Mode | File | User | Can |
+|---|---|---|---|
+| read-only (default) | `mcp-access-0.env` (committed, default password) | `mcp-reader` | list and read the bucket |
+| edit | `mcp-access-1.env` (git-ignored, random password generated on first run) | `mcp-editor` | also write and delete |
+
+Read-only is enforced in three layers: MinIO denies writes to `mcp-reader` (`AccessDenied`, tested), the server accepts only
+`SELECT`/`DESCRIBE`, and DuckDB is locked to `s3://lake/` so a query cannot read the container's own files (the container
+filesystem is read-only too). Rows are capped (`MCP_ROW_LIMIT`, 1000) and queries stop after `MCP_TIMEOUT_S` (60 s).
+There is **no authentication** on the endpoint: it is published on `127.0.0.1` only, like Jupyter, so treat edit mode
+accordingly. Writes still hit the bucket's hard quota.
 
 ---
 
@@ -232,6 +269,7 @@ Current categories:
 | `CONTACT_EMAIL` | — | optional: added to the `User-Agent` of the download requests so publishers can reach you; set it in `s3.env` |
 | `PAUSA_S` | `3` | pause (seconds) between requests to the same publisher |
 | `KEEP_RAW` | — | `1` keeps the downloads in `data/raw` after a run |
+| `AUTOHEAL_ACTIVE` / `MCP_ACTIVE` / `MCP_EDIT_ACCESS` | `0` | deploy switches of the optional services, see [4.1](#41-optional-services-autoheal-and-mcp) |
 | `QUOTA_GIB` | `5` | bucket quota assumed by the size guards of `clima`/`empresas` (keep it equal to the `init-minio.sh` quota) |
 
 ---
@@ -252,7 +290,7 @@ Current categories:
 - **Port in use:** change the host side of the `ports:` entries in `docker-compose.yml` (the Spark UIs already avoid 8080/8081).
 - **Changed a Dockerfile?** The Jupyter image is built on top of the Spark image: `docker compose build` then `up -d`.
   Packages installed by hand with `pip` inside a container are lost when it is recreated.
-- **Credentials:** `minio.env` and `s3.env` are git-ignored; MinIO's console and API listen only on `127.0.0.1`.
+- **Credentials:** `minio.env`, `s3.env` and `mcp-access-1.env` are git-ignored (`mcp-access-0.env` is the committed read-only default); MinIO's console and API listen only on `127.0.0.1`.
 
 ---
 
