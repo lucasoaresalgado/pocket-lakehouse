@@ -33,6 +33,7 @@ notebooks/mineracao/
 ├── 00_flow_mineracao_petroleo.ipynb     the full flow (6 branches + summary)
 ├── 01_anm_cfem.ipynb … 06_anm_dipem.ipynb   one notebook per source
 ├── 10_Analytics.ipynb                   analysis: pandas + DuckDB (SQL) + matplotlib
+├── MCP_test.ipynb                       CFEM royalties: totals, substances, states, municipalities (7 charts + findings)
 ├── run.py                               runs one pipeline from the command line
 ├── pipelines/                           the code (section 10)
 └── tests/                               tests (section 12)
