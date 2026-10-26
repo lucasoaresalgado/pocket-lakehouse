@@ -1,0 +1,4 @@
+# the images need only their Dockerfiles (nothing is COPYed); keep the build context tiny
+*
+!Dockerfile
+!Dockerfile.jupyter

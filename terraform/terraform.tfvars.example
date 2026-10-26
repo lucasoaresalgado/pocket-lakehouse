@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars (git-ignored) and change what you need. Every line shows the default.
+
+# optional services (0 / 1)
+autoheal_active = 0
+mcp_active      = 0
+mcp_edit_access = 0   # 0 = read-only; 1 = the MCP may also write and delete
+
+# storage
+minio_quota_gib = 5
+
+# Spark cluster
+worker_count       = 2
+worker_cores       = 2
+worker_memory_mb   = 2048
+executor_memory_mb = 1536

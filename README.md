@@ -8,7 +8,7 @@ extract ──► transform ──► store ──► analyze
   JDBC)                    on MinIO)   matplotlib)
 ```
 
-It is deliberately **monolithic**: one repository, one `docker compose` stack, one lake. Scripts are grouped by
+It is deliberately **monolithic**: one repository, one Terraform-managed Docker stack, one lake. Scripts are grouped by
 *category* (a folder per theme, see [Adding a category](#5-adding-a-category)); the first one is mining and oil.
 
 ![CFEM royalties collected vs DIPEM research investment, per year](docs/img/cfem_vs_dipem.png)
@@ -77,11 +77,10 @@ It is deliberately **monolithic**: one repository, one `docker compose` stack, o
 ```
 pocket-lakehouse/
 ├── README.md                    this file
-├── docker-compose.yml           the whole stack: MinIO + Spark cluster + JupyterLab
+├── terraform/                   the whole stack as code: MinIO + Spark cluster + JupyterLab (+ optional MCP, autoheal); tunables in variables.tf
 ├── Dockerfile                   Spark image (JDBC drivers for SQL Server/Postgres/MySQL; S3A for MinIO)
 ├── Dockerfile.jupyter           Jupyter image (JupyterLab, pandas, pyarrow, matplotlib, s3fs, DuckDB, openpyxl, py7zr)
-├── conf/spark-defaults.conf     Spark and S3A connector configuration
-├── scripts/init-minio.sh        creates the bucket and applies the quota (idempotent)
+├── scripts/init-minio.sh        creates the bucket, the quota and the MCP users (idempotent; run by Terraform)
 ├── minio.env / s3.env           credentials (git-ignored; copy the *.example files)
 ├── apps/                        spark-submit scripts: smoke tests and a generic JDBC extractor
 ├── data/                        local area: raw/ (temporary downloads) and ref/ (IBGE cache)
@@ -98,7 +97,8 @@ pocket-lakehouse/
 
 ## 3. Infrastructure (containers)
 
-Everything is in `docker-compose.yml` (project name `spark`, network `spark_spark`).
+Everything is in `terraform/` (variable `project` = `spark`, network `spark_spark`). Spark's configuration is the template
+`terraform/templates/spark-defaults.conf.tftpl`, rendered with the cluster tunables and uploaded into each Spark container.
 
 | Container | Role | Host ports | Memory limit |
 |---|---|---|---|
@@ -109,8 +109,8 @@ Everything is in `docker-compose.yml` (project name `spark`, network `spark_spar
 | `spark-history` | shows finished jobs (reads `event-logs/`) | **18080** | 640 MB |
 | `spark-client` | container for `spark-submit` (client mode / driver) | 4040 (job UI) | 1.5 GB |
 | `spark-jupyter` | JupyterLab with PySpark; the notebooks run from here | **8888**, 4041 (job UI) | 2 GB |
-| `autoheal` | restarts containers that turn `unhealthy` — **opt-in**, `AUTOHEAL_ACTIVE=1` | — | 32 MB |
-| `mcp` | MCP server over the lake — **opt-in**, `MCP_ACTIVE=1` (see [section 4.1](#41-optional-services-autoheal-and-mcp)) | **8765** (`127.0.0.1`) | 768 MB |
+| `autoheal` | restarts containers that turn `unhealthy` — **opt-in**, `autoheal_active=1` | — | 32 MB |
+| `mcp` | MCP server over the lake — **opt-in**, `mcp_active=1` (see [section 4.1](#41-tunables)) | **8765** (`127.0.0.1`) | 768 MB |
 
 The Spark UIs are published on host ports 8090–8092 so they do not clash with other local services on 8080/8081.
 
@@ -140,13 +140,17 @@ cp s3.env.example s3.env            # edit: same values as AWS_ACCESS_KEY_ID / A
 ```
 
 ```bash
-# start everything (add --build after changing a Dockerfile)
-docker compose up -d
-./scripts/init-minio.sh             # first time only: creates bucket "lake" and the 5 GiB quota
+cd terraform
+terraform init                      # first time only
+terraform apply                     # builds the images, starts everything, creates the bucket, quota and MCP users
+terraform output                    # URLs and the capacity the tunables add up to
 
 # stop (frees RAM; data stays in ./minio-data)
-docker compose down
+terraform destroy
 ```
+
+Change a tunable with `terraform apply -var worker_count=3`, or put it in `terraform/terraform.tfvars` (copy
+`terraform.tfvars.example`). `terraform plan` shows what a change would recreate before anything happens.
 
 | I want… | Address |
 |---|---|
@@ -162,34 +166,41 @@ docker exec spark-client /opt/spark/bin/spark-submit --master spark://spark-mast
 docker exec spark-client /opt/spark/bin/spark-submit --master spark://spark-master:7077 /apps/s3_smoke.py    # writes/reads MinIO
 ```
 
-### 4.1 Optional services: autoheal and MCP
+### 4.1 Tunables
 
-Two services are off unless you switch them on. The switches are read by `docker compose up -d` from the shell or from a
-`.env` file (copy `.env.example`); unset means `0`. Setting a switch back to `0` and running `up -d` removes the container.
+All of them are variables in `terraform/variables.tf` (with validation); the table lists the ones you will change.
 
-| Switch | Default | Effect |
+| Variable | Default | Effect |
 |---|---|---|
-| `AUTOHEAL_ACTIVE` | `0` | `1` deploys `autoheal` (needs the Docker socket, which is root-equivalent on the host, hence opt-in) |
-| `MCP_ACTIVE` | `0` | `1` deploys the MCP server at `http://127.0.0.1:8765/mcp` (Streamable HTTP) |
-| `MCP_EDIT_ACCESS` | `0` | only with `MCP_ACTIVE=1`. `0` = **read-only**; `1` = the agent may also write and delete in the bucket |
+| `autoheal_active` | `0` | `1` deploys `autoheal` (needs the Docker socket, which is root-equivalent on the host, hence opt-in) |
+| `mcp_active` | `0` | `1` deploys the MCP server at `http://127.0.0.1:8765/mcp` (Streamable HTTP) |
+| `mcp_edit_access` | `0` | only with `mcp_active=1`. `0` = **read-only**; `1` = the agent may also write and delete in the bucket |
+| `minio_quota_gib` | `5` | hard quota of the bucket; also handed to the pipelines' size guards (`QUOTA_GIB`), so they always agree |
+| `worker_count` | `2` | Spark workers; `spark.cores.max` is computed as `worker_count × worker_cores`, so a new worker adds capacity |
+| `worker_cores` | `2` | cores per worker (one executor per worker uses them all) |
+| `worker_memory_mb` / `executor_memory_mb` | `2048` / `1536` | memory a worker offers / each executor takes (validated: executor ≤ worker) |
+| `*_memory_mb` | see file | container limit of minio, master, history, client, jupyter, mcp |
+| `host_port_offset` / `project` | `0` / `spark` | shift every published port / prefix container and network names, to run a second copy beside the first |
 
 ```bash
-./scripts/init-minio.sh                       # once (re-run is safe): also creates the MCP users below
-MCP_ACTIVE=1 docker compose up -d --build     # or put MCP_ACTIVE=1 in .env
+cd terraform && terraform apply -var mcp_active=1
 claude mcp add --transport http lakehouse http://127.0.0.1:8765/mcp
 ```
 
+Setting a switch back to `0` and applying removes the container. The state file (`terraform/terraform.tfstate`, git-ignored)
+holds the credentials: keep it out of git and off shared disks.
+
 **Tools:** `list_tables`, `describe_table`, `query` (DuckDB SQL over the Parquet, e.g.
 `SELECT … FROM read_parquet('s3://lake/estudo/<table>/**/*.parquet', hive_partitioning=true)`), `lake_usage` (bucket use
-against the quota). With `MCP_EDIT_ACCESS=1` there is also `delete_table`, and `query` accepts any statement
+against the quota). With `mcp_edit_access=1` there is also `delete_table`, and `query` accepts any statement
 (`COPY … TO 's3://lake/…'`, `CREATE`, …).
 
-**Credentials.** `init-minio.sh` creates two MinIO users, each with a policy limited to the one bucket:
+**Credentials.** `scripts/init-minio.sh` (run by Terraform) creates two MinIO users, each with a policy limited to the one bucket:
 
-| Mode | File | User | Can |
+| Mode | Password | User | Can |
 |---|---|---|---|
-| read-only (default) | `mcp-access-0.env` (committed, default password) | `mcp-reader` | list and read the bucket |
-| edit | `mcp-access-1.env` (git-ignored, random password generated on first run) | `mcp-editor` | also write and delete |
+| read-only (default) | variable `mcp_reader_password` (default `mcp-readonly-default`) | `mcp-reader` | list and read the bucket |
+| edit | random, generated by Terraform and kept in the state | `mcp-editor` | also write and delete |
 
 Read-only is enforced in three layers: MinIO denies writes to `mcp-reader` (`AccessDenied`, tested), the server accepts only
 `SELECT`/`DESCRIBE`, and DuckDB is locked to `s3://lake/` so a query cannot read the container's own files (the container
@@ -244,7 +255,7 @@ Current categories:
   another name (e.g. `target_db="teste"`) to keep a trial load apart, then delete that folder.
 - **Hard 5 GiB quota** on the bucket. Without sudo a fixed-size partition cannot be created on the host, so the limit is
   MinIO's native quota: uploads beyond it fail with `Bucket quota exceeded` (tested). To change it:
-  `QUOTA=10GiB ./scripts/init-minio.sh`.
+  `terraform apply -var minio_quota_gib=10`.
 - The quota counts only the bucket content. The MinIO process and temporary downloads in `data/raw` are not counted.
 - During an *upsert* load there are temporary copies of the table (`.__stage`, `.__merge`), so usage can exceed the final
   size for a few moments.
@@ -269,28 +280,27 @@ Current categories:
 | `CONTACT_EMAIL` | — | optional: added to the `User-Agent` of the download requests so publishers can reach you; set it in `s3.env` |
 | `PAUSA_S` | `3` | pause (seconds) between requests to the same publisher |
 | `KEEP_RAW` | — | `1` keeps the downloads in `data/raw` after a run |
-| `AUTOHEAL_ACTIVE` / `MCP_ACTIVE` / `MCP_EDIT_ACCESS` | `0` | deploy switches of the optional services, see [4.1](#41-optional-services-autoheal-and-mcp) |
-| `QUOTA_GIB` | `5` | bucket quota assumed by the size guards of `clima`/`empresas` (keep it equal to the `init-minio.sh` quota) |
+| `QUOTA_GIB` | `5` | bucket quota assumed by the size guards of `clima`/`empresas` (set by Terraform from `minio_quota_gib`) |
 
 ---
 
 ## 8. Hardware limits and troubleshooting
 
 - **RAM:** developed on WSL 2 with ~15 GB. Container limits add up to ~10 GB at the ceiling, but idle use is
-  ~1.3 GB. Stop the stack (`docker compose down`) when not in use.
+  ~1.3 GB. Stop the stack (`terraform destroy`) when not in use.
 - **Jupyter with 2 GB:** small/medium tables fit in pandas; very large ones (e.g. `anm_scm_evento`, 2 M rows) need
   `columns=`/`filters=`, DuckDB straight on the Parquet, or Spark.
 - **Cores:** 4 in total. A session asks for 2 by default; use `--cores 4` / `cores_max=4` for heavy jobs (and nothing else running).
-- **MinIO quota full:** writes fail with `Bucket quota exceeded`. Delete test prefixes or raise the quota with `init-minio.sh`.
+- **MinIO quota full:** writes fail with `Bucket quota exceeded`. Delete test prefixes or raise `minio_quota_gib`.
 - **File permissions when editing notebooks from the host:** the container runs as another user (uid 185). A file the host
   rewrites as `644` opens read-only in Jupyter; fix with `chmod a+rw <file>` or `chmod -R a+rwX notebooks/<category>`.
   Files created by the container may not be removable by the host (run the `rm` through `docker exec`).
 - **`docker exec` with a script on stdin** needs `-i`; the container's `/tmp` has files from another user — prefer
   `docker cp` to `/notebooks/` and delete afterwards.
-- **Port in use:** change the host side of the `ports:` entries in `docker-compose.yml` (the Spark UIs already avoid 8080/8081).
-- **Changed a Dockerfile?** The Jupyter image is built on top of the Spark image: `docker compose build` then `up -d`.
+- **Port in use:** set `host_port_offset`, or change the `ports` blocks in `terraform/*.tf` (the Spark UIs already avoid 8080/8081).
+- **Changed a Dockerfile?** The Jupyter image is built on top of the Spark image: `terraform apply` (it rebuilds the images when a Dockerfile changes).
   Packages installed by hand with `pip` inside a container are lost when it is recreated.
-- **Credentials:** `minio.env`, `s3.env` and `mcp-access-1.env` are git-ignored (`mcp-access-0.env` is the committed read-only default); MinIO's console and API listen only on `127.0.0.1`.
+- **Credentials:** `minio.env`, `s3.env`, `terraform.tfvars` and the Terraform state are git-ignored; MinIO's console and API listen only on `127.0.0.1`.
 
 ---
 

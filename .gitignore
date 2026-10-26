@@ -13,6 +13,15 @@ minio.env
 __pycache__/
 *.pyc
 
-# deploy switches and the MCP write credentials
+# terraform: state holds credentials; tfvars are local overrides
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+.test.tfvars
+.tftest-minio/
+crash.log
+
+# legacy docker-compose files (no longer read)
 .env
 mcp-access-1.env
