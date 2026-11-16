@@ -22,6 +22,8 @@ from . import janela as J
 
 FONTE = "power"
 TABLE = "nasa_power_diario"
+# data quality (lakehouse/quality.py, card #9): checked before every commit
+C.Q.expect(TABLE, pk=["data", "cod_ibge"])
 FIRST_DATE = "1981-01-01"
 API = "https://power.larc.nasa.gov/api/temporal/daily/regional"
 HTTP_TIMEOUT_S = 300

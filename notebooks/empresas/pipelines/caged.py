@@ -23,6 +23,8 @@ TABLE = "caged_mov"
 FTP_HOST = "ftp.mtps.gov.br"
 FTP_BASE = "/pdet/microdados/NOVO CAGED"
 PART_COL = "competencia_arquivo"
+# data quality (lakehouse/quality.py, card #9): checked before every commit
+C.Q.expect(TABLE)  # movement records, no natural key: each rewritten month must not be empty
 BYTES_PER_MONTH = 90 << 20  # measured ~77 MB of Parquet for 2026-08 (4.4 M rows), with a margin
 
 

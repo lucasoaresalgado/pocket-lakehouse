@@ -19,6 +19,9 @@ T = {"processo": "anm_scm_processo", "substancia": "anm_scm_substancia", "munici
      "pessoa": "anm_scm_pessoa", "titulo": "anm_scm_titulo", "evento": "anm_scm_evento"}
 PK = {"processo": ["processo"], "substancia": ["processo", "chave"], "municipio": ["processo", "cod_ibge"],
       "pessoa": ["processo", "chave"], "titulo": ["processo", "chave"], "evento": ["processo", "chave"]}
+# data quality (lakehouse/quality.py, card #9): checked before every commit
+for _k, _t in T.items():
+    C.Q.expect(_t, pk=PK[_k])  # dropDuplicates(PK[k]) before staging: unique by construction
 
 _TAIL = [("carga_em", "timestamp"), ("loaded_at", "timestamp")]
 SCHEMA = {

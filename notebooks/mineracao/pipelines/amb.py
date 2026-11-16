@@ -11,6 +11,8 @@ from . import common as C
 
 FONTE = "anm_amb"
 TABLE = "anm_amb_producao"
+# data quality (lakehouse/quality.py, card #9): checked before every commit
+C.Q.expect(TABLE, pk=["ano", "chave"])
 FIRST_YEAR = 2010
 URLS_PADRAO = ["https://dadosabertos.anm.gov.br/AMB/Producao_Bruta.csv",
                "https://dadosabertos.anm.gov.br/AMB/Producao_Beneficiada.csv"]

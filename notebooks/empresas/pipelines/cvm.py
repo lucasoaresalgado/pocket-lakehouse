@@ -20,6 +20,8 @@ from lakehouse import core as C
 FONTE = "cvm"
 BASE_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC"
 SR_KEY_COL = "cnpj_cia"
+# data quality (lakehouse/quality.py, card #9): checked before every commit
+C.Q.expect("cvm_", prefix=True)  # tables named per document, no common key: not empty only
 
 
 def zip_url(doc_type: str, year: int, base_url: str = BASE_URL) -> str:

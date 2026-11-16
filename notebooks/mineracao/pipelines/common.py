@@ -20,6 +20,13 @@ from pyspark import StorageLevel
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql import functions as F
 
+# the quality checks live in the shared notebooks/lakehouse package (card #9)
+import sys as _sys
+_NOTEBOOKS = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _NOTEBOOKS not in _sys.path:
+    _sys.path.insert(0, _NOTEBOOKS)
+from lakehouse import quality as Q  # noqa: E402
+
 os.umask(0)  # files written from Python stay deletable from the WSL host (Spark side: umask-mode in spark-defaults)
 
 DATA_ROOT = os.environ.get("DATA_ROOT", "/data")
@@ -543,6 +550,35 @@ def watermark_ym(db: str, table: str, col: str = "ano_mes") -> Optional[str]:
     return pd.Timestamp(s.max()).strftime("%Y-%m") if len(s) else None
 
 
+def save_quality(db: str, table: str, report: dict) -> None:
+    """keeps the last quality report of each table with the run bookkeeping: <db>/_ctl/quality/<table>.json"""
+    d = "%s/%s/_ctl/quality" % (_root(), db)
+    try:
+        fs().makedirs(d, exist_ok=True)
+        with fs().open("%s/%s.json" % (d, table), "w") as fh:
+            json.dump(report, fh, ensure_ascii=False, indent=1)
+    except Exception as e:  # bookkeeping must never fail a load
+        print("[quality] %s.%s: report not saved (%s)" % (db, table, e), flush=True)
+
+
+def _quality_gate(spark: SparkSession, db: str, table: str, result_path: str, pk: Optional[Sequence[str]],
+                  cleanup: Sequence[str], base_path: Optional[str] = None) -> dict:
+    """runs the table's checks on what would become live (before the swap); on a hard failure removes `cleanup`
+    (stage, merge) and raises, so the live table is left as it was"""
+    reader = spark.read.option("mergeSchema", "true")
+    if base_path:
+        reader = reader.option("basePath", uri(base_path))
+    try:
+        report = Q.check(reader.parquet(uri(result_path)), table, pk)
+    except Q.DataQualityError as e:
+        save_quality(db, table, e.report)
+        for p in cleanup:
+            _rm(p)
+        raise
+    save_quality(db, table, report)
+    return report
+
+
 def stage(df: DataFrame, spark: SparkSession, db: str, table: str) -> int:
     """writes the new rows next to the table (path.__stage) and returns how many there are"""
     path = table_path(db, table) + ".__stage"
@@ -564,6 +600,8 @@ def commit(spark: SparkSession, db: str, table: str, pk: Optional[Sequence[str]]
         _rm(merged)
         (old.join(new.select(*pk).distinct(), list(pk), "left_anti").unionByName(new, allowMissingColumns=True)
          .write.mode("overwrite").parquet(uri(merged)))
+    # quality checks on the result, before the live table is touched (card #9)
+    _quality_gate(spark, db, table, merged, pk, cleanup=[merged, staged] if merged != staged else [staged])
     _rm(path)
     _mv_dir(merged, path)
     _rm(staged)

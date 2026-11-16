@@ -19,6 +19,7 @@ from pyspark.sql import SparkSession
 
 from pipelines import flow, grib2, ibge, janela as J, merge, power
 from lakehouse import core as C
+from lakehouse import quality as Q
 
 ROOT = os.environ["DATA_ROOT"]
 FIX = os.path.join(ROOT, "fixtures")
@@ -337,6 +338,90 @@ class TestFlow(unittest.TestCase):
         self.assertIn("erro", flow._resumo({"error": "boom"}))
         self.assertEqual(flow._resumo({"fonte": "power", "dry_run": True})["status"], "dry_run")
 
+
+
+class TestQuality(Base):
+    """data quality gate in lakehouse/core.py (card #9): checked on the result, before the live table is touched"""
+
+    def df(self, rows):
+        return self.spark.createDataFrame(rows, "id string, uf string, valor double")
+
+    def ctl(self, table):
+        import json
+        with open(os.path.join(C.table_path(DB, "_ctl"), "quality", table + ".json")) as f:
+            return json.load(f)
+
+    def test_passing_load_records_its_report(self):
+        Q.expect("q_ok", pk=["id"], not_null=["uf"])
+        n = C.load(self.spark, self.df([("1", "MG", 1.0), ("2", "PE", 2.0)]), DB, "q_ok", pk=["id"])
+        self.assertEqual(n, 2)
+        rep = self.ctl("q_ok")
+        self.assertTrue(rep["passed"])
+        self.assertEqual((rep["rows"], rep["duplicated_keys"]), (2, 0))
+
+    def test_hard_failure_leaves_the_live_table_intact(self):
+        Q.expect("q_dup", pk=["id"])
+        C.load(self.spark, self.df([("1", "MG", 1.0)]), DB, "q_dup", pk=["id"])
+        with self.assertRaises(Q.DataQualityError) as ctx:  # two rows with the same key in one batch
+            C.load(self.spark, self.df([("2", "PE", 2.0), ("2", "RJ", 3.0)]), DB, "q_dup", pk=["id"])
+        self.assertIn("duplicated key", str(ctx.exception))
+        self.assertIn("q_dup", str(ctx.exception))
+        live = C.read_table_pd(DB, "q_dup")
+        self.assertEqual(live["id"].tolist(), ["1"])  # untouched
+        self.assertFalse(os.path.exists(C.table_path(DB, "q_dup") + ".__stage"))
+        self.assertFalse(os.path.exists(C.table_path(DB, "q_dup") + ".__merge"))
+        self.assertFalse(self.ctl("q_dup")["passed"])
+
+    def test_null_key_and_required_column_fail(self):
+        Q.expect("q_null", pk=["id"], not_null=["uf"])
+        with self.assertRaises(Q.DataQualityError) as ctx:
+            C.load(self.spark, self.df([(None, "MG", 1.0), ("2", None, 2.0)]), DB, "q_null", snapshot=True)
+        self.assertIn("key column id", str(ctx.exception))
+        self.assertIn("required column uf", str(ctx.exception))
+        self.assertFalse(C.table_exists(DB, "q_null"))
+
+    def test_an_empty_snapshot_never_replaces_a_table(self):
+        C.load(self.spark, self.df([("1", "MG", 1.0)]), DB, "q_empty", snapshot=True)
+        with self.assertRaises(Q.DataQualityError):
+            C.load(self.spark, self.df([]), DB, "q_empty", snapshot=True)
+        self.assertEqual(len(C.read_table_pd(DB, "q_empty")), 1)
+
+    def test_soft_checks_only_warn(self):
+        Q.expect("q_soft", pk=["id"], ranges={"valor": (0, 100)}, allowed={"uf": ["MG", "PE"]})
+        C.load(self.spark, self.df([("1", "MG", 50.0), ("2", "SP", -1.0)]), DB, "q_soft", snapshot=True)
+        rep = self.ctl("q_soft")
+        self.assertTrue(rep["passed"])
+        self.assertEqual(len(rep["warnings"]), 2)
+        self.assertEqual(len(C.read_table_pd(DB, "q_soft")), 2)
+
+    def test_soft_checks_can_be_made_hard(self):
+        Q.expect("q_hardrange", ranges={"valor": (0, None)}, hard=["ranges"])
+        with self.assertRaises(Q.DataQualityError):
+            C.load(self.spark, self.df([("1", "MG", -5.0)]), DB, "q_hardrange", snapshot=True)
+
+    def test_a_key_not_confirmed_yet_only_warns(self):
+        Q.expect("q_softpk", pk=["uf"], pk_soft=True)
+        C.load(self.spark, self.df([("1", "MG", 1.0), ("2", "MG", 2.0)]), DB, "q_softpk", snapshot=True)
+        rep = self.ctl("q_softpk")
+        self.assertTrue(rep["passed"])
+        self.assertIn("not confirmed", rep["warnings"][0])
+
+    def test_partitions_are_checked_before_the_swap(self):
+        Q.expect("q_part", pk=["data", "cod_ibge"])
+        rows = [("2025-01-01", "3106200", 2025, 1.0)]
+        C.stage(self.spark.createDataFrame(rows, "data string, cod_ibge string, ano int, mm double"), self.spark, DB, "q_part")
+        C.commit_partitions(self.spark, DB, "q_part", "ano", pk=["data", "cod_ibge"])
+        dup = [("2025-01-02", "3106200", 2025, 2.0), ("2025-01-02", "3106200", 2025, 3.0)]
+        C.stage(self.spark.createDataFrame(dup, "data string, cod_ibge string, ano int, mm double"), self.spark, DB, "q_part")
+        with self.assertRaises(Q.DataQualityError):
+            C.commit_partitions(self.spark, DB, "q_part", "ano", pk=["data", "cod_ibge"])
+        self.assertEqual(len(C.read_table_pd(DB, "q_part")), 1)
+
+    def test_every_pipeline_table_declares_its_checks(self):
+        declared = Q.declared()
+        for t in ("cptec_merge_diario", "nasa_power_diario", "dim_estadosIbge", "dim_municipiosIbge", "dim_municipiosIbgeAliases"):
+            self.assertIn(t, declared)
+            self.assertTrue(declared[t].pk, t)
 
 if __name__ == "__main__":
     unittest.main()

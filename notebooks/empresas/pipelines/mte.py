@@ -25,6 +25,8 @@ from lakehouse import core as C
 
 FONTE = "mte_lista_suja"
 TABLE = "mte_cadastro_empregadores"
+# data quality (lakehouse/quality.py, card #9): checked before every commit
+C.Q.expect(TABLE, pk=["chave_registro"])
 SOURCE_URL = ("https://www.gov.br/trabalho-e-emprego/pt-br/assuntos/inspecao-do-trabalho/areas-de-atuacao/"
               "cadastro_de_empregadores.xlsx")
 MIN_ROWS = 100  # the list has hundreds of rows; fewer = truncated spreadsheet
