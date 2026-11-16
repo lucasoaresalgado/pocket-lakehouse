@@ -448,5 +448,27 @@ class TestScm(Base):
             scm.main(self.spark, urls=["file://" + zp], target_db="t_bad", mode="backfill")
 
 
+
+class TestQuality(Base):
+    """the same quality gate in mineracao's own write path (pipelines/common.py, card #9)"""
+
+    def df(self, rows):
+        return self.spark.createDataFrame(rows, "ano_mes string, chave string, valor double")
+
+    def test_upsert_with_duplicated_keys_is_refused_and_the_table_kept(self):
+        C.load(self.spark, self.df([("2025-01", "a", 1.0)]), DB, "q_min", pk=["ano_mes", "chave"])
+        with self.assertRaises(C.Q.DataQualityError):
+            C.load(self.spark, self.df([("2025-02", "b", 1.0), ("2025-02", "b", 2.0)]), DB, "q_min", pk=["ano_mes", "chave"])
+        self.assertEqual(table("q_min")["chave"].tolist(), ["a"])
+        n = C.load(self.spark, self.df([("2025-02", "b", 1.0)]), DB, "q_min", pk=["ano_mes", "chave"])
+        self.assertEqual((n, len(table("q_min"))), (1, 2))
+
+    def test_every_pipeline_table_declares_a_key(self):
+        declared = C.Q.declared()
+        for t in ("anm_cfem_arrecadacao", "anm_amb_producao", "anp_producao_poco", "anp_producao_instalacao", "anm_dipem_investimento",
+                  "anm_sigbm_barragem", "anm_scm_processo", "anm_scm_evento"):
+            self.assertIn(t, declared)
+            self.assertTrue(declared[t].pk, t)
+
 if __name__ == "__main__":
     unittest.main()

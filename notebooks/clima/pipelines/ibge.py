@@ -15,6 +15,10 @@ from lakehouse import core as C
 FONTE = "ibge_municipios"
 BASE_URL = "https://raw.githubusercontent.com/kelvins/municipios-brasileiros/main/csv"
 TB_EST, TB_MUN, TB_ALI = "dim_estadosIbge", "dim_municipiosIbge", "dim_municipiosIbgeAliases"
+# data quality (lakehouse/quality.py, card #9): checked before every commit
+C.Q.expect(TB_EST, pk=["cod_uf"])
+C.Q.expect(TB_MUN, pk=["cod_ibge"])
+C.Q.expect(TB_ALI, pk=["alias_norm", "uf"])
 
 SCHEMA_EST = [("cod_uf", "string"), ("uf", "string"), ("estado", "string"), ("estado_norm", "string"), ("regiao", "string"),
               ("latitude", "decimal(10,6)"), ("longitude", "decimal(10,6)"), ("loaded_at", "timestamp")]

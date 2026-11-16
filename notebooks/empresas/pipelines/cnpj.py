@@ -56,6 +56,13 @@ def sr_table_name(table: str) -> str:
     return "cnpj_%s" % table.lower()
 
 
+# data quality (lakehouse/quality.py, card #9): checked before every commit. The keys are the Receita's layout,
+# not yet confirmed on a full release (duplicates only warn); Socios has no natural key; lookups only must not be empty.
+C.Q.expect(sr_table_name("Empresas"), pk=["cnpj_basico"], pk_soft=True)
+C.Q.expect(sr_table_name("Estabelecimentos"), pk=["cnpj_basico", "cnpj_ordem", "cnpj_dv"], pk_soft=True)
+C.Q.expect(sr_table_name("Simples"), pk=["cnpj_basico"], pk_soft=True)
+
+
 def get_dates(base_url: str = BASE_URL) -> List[str]:
     html = C.http_text(base_url + "/", headers=BROWSER_UA)
     dates = sorted(set(re.findall(r'href="(\d{4}-\d{2}-\d{2})/"', html)))

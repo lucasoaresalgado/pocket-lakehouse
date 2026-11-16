@@ -395,5 +395,20 @@ class TestFlow(unittest.TestCase):
         self.assertIn("erro", flow._resumo("x", {"error": "boom"}))
 
 
+
+class TestQualityDeclarations(unittest.TestCase):
+    def test_every_pipeline_table_is_declared(self):
+        from lakehouse import quality as Q
+        d = Q.declared()
+        keyed = ["cgu_ceis", "cgu_cnep", "cgu_cepim", "cgu_acordos_leniencia", "cgu_acordos_leniencia_efeitos", "cgu_ceaf",
+                 "comprasgov_pncp_contratacoes", "comprasgov_pncp_itens", "comprasgov_pncp_resultados", "mte_cadastro_empregadores",
+                 "cnpj_empresas", "cnpj_estabelecimentos", "cnpj_simples"]
+        for t in keyed:
+            self.assertIn(t, d)
+            self.assertTrue(d[t].pk, t)
+        for t in ("pgfn_devedores", "caged_mov", "cvm_*"):  # no natural key: not empty only
+            self.assertIn(t, d)
+        self.assertIsNotNone(Q.expectation("cvm_dfp_dre"))
+
 if __name__ == "__main__":
     unittest.main()

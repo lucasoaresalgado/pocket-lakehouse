@@ -257,6 +257,36 @@ Current categories:
 
 ---
 
+### Data quality checks
+
+Every commit runs the table's checks on what is about to become live (the staged rows of a snapshot, the merged table of
+an upsert, each rewritten partition) **before** the live table is touched. Code: `notebooks/lakehouse/quality.py`, used by
+both write paths (`lakehouse/core.py` and `mineracao/pipelines/common.py`).
+
+| Check | Kind | Failing it |
+|---|---|---|
+| not empty (every table, unless `allow_empty=True`) | hard | the commit stops: stage dropped, live table intact, `DataQualityError` names the table and the check |
+| primary key unique and not null (the upsert key, and the declared `pk`) | hard | same |
+| `not_null` columns | hard | same |
+| `ranges={"col": (min, max)}`, `allowed={"col": [...]}` | soft | a `[quality] … warning` line; the load goes on (`hard=["ranges"]` makes it fail) |
+| a declared key not yet confirmed on the real data (`pk_soft=True`) | soft | duplicates and nulls in it only warn |
+
+The last report of each table is kept with the run bookkeeping: `<target_db>/_ctl/quality/<table>.json` (rows, nulls,
+duplicated keys, failures, warnings).
+
+**Adding a check:** declare it next to the table name in the pipeline module, at import time:
+
+```python
+TABLE = "anm_cfem_arrecadacao"
+C.Q.expect(TABLE, pk=["ano_mes", "chave"], not_null=["valor"], ranges={"valor": (0, None)})
+```
+
+Tables named at run time are declared by prefix (`C.Q.expect("cvm_", prefix=True)`). Keys still to confirm against real
+data: `anm_sigbm_barragem.id_barragem` and the CNPJ keys (`pk_soft=True`). Tables without a natural key (`pgfn_devedores`,
+`caged_mov`, `cnpj_socios`, the `cvm_*` tables) only check that the result is not empty.
+
+---
+
 ## 7. Environment variables
 
 | Variable | Default | Effect |

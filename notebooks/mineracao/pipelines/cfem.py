@@ -22,6 +22,8 @@ from . import common as C
 
 FONTE = "anm_cfem"
 TABLE = "anm_cfem_arrecadacao"
+# data quality (lakehouse/quality.py, card #9): checked before every commit
+C.Q.expect(TABLE, pk=["ano_mes", "chave"])
 FIRST_YM = "2015-01"
 URLS_PADRAO = ["https://dadosabertos.anm.gov.br/CFEM/CFEM_Arrecadacao.csv"]
 

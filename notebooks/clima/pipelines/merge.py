@@ -20,6 +20,8 @@ from . import janela as J
 
 FONTE = "merge"
 TABLE = "cptec_merge_diario"
+# data quality (lakehouse/quality.py, card #9): checked before every commit
+C.Q.expect(TABLE, pk=["data", "cod_ibge"])
 FIRST_DATE = "2000-06-01"
 URL_TEMPLATE = "https://ftp.cptec.inpe.br/modelos/tempo/MERGE/GPM/DAILY/{Y}/{m}/MERGE_CPTEC_{Y}{m}{d}.grib2"
 HTTP_TIMEOUT_S = 180

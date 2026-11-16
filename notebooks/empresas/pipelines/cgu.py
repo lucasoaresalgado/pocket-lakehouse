@@ -97,6 +97,11 @@ DATASETS: Dict[str, dict] = {
                            ("ORIGEM INFORMAÇÕES", "origem_informacoes"), ("OBSERVAÇÕES", "observacoes")]}}},
 }
 
+# data quality (lakehouse/quality.py, card #9): checked before every commit
+for _ds in DATASETS.values():
+    for _spec in _ds["csvs"].values():
+        C.Q.expect(_spec["table"], pk=_spec["pk"])  # rows with a null key are skipped before staging
+
 
 def norm_header(text: str) -> str:
     """letters/digits only, no accents, upper case, single spaces (the source alternates '-', '–' and double spaces)"""

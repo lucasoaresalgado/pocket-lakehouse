@@ -24,6 +24,8 @@ from pyspark import StorageLevel
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql import functions as F
 
+from lakehouse import quality as Q
+
 os.umask(0) # this and fs.permissions.umask-mode=000 -> Everything recorded gets open access permission, so one container doesn't generate files another can't erase.
 
 DATA_ROOT = os.environ.get("DATA_ROOT", "/data")
@@ -456,6 +458,35 @@ def read_table_pd(db: str, table: str, columns: Optional[List[str]] = None, filt
     return pq.ParquetDataset(p, filesystem=fs(), filters=filters).read(columns=columns).to_pandas()
 
 
+def save_quality(db: str, table: str, report: dict) -> None:
+    """keeps the last quality report of each table with the run bookkeeping: <db>/_ctl/quality/<table>.json"""
+    d = "%s/%s/_ctl/quality" % (_root(), db)
+    try:
+        fs().makedirs(d, exist_ok=True)
+        with fs().open("%s/%s.json" % (d, table), "w") as fh:
+            json.dump(report, fh, ensure_ascii=False, indent=1)
+    except Exception as e:  # bookkeeping must never fail a load
+        print("[quality] %s.%s: report not saved (%s)" % (db, table, e), flush=True)
+
+
+def _quality_gate(spark: SparkSession, db: str, table: str, result_path: str, pk: Optional[Sequence[str]],
+                  cleanup: Sequence[str], base_path: Optional[str] = None) -> dict:
+    """runs the table's checks on what would become live (before the swap); on a hard failure removes `cleanup`
+    (stage, merge) and raises, so the live table is left as it was"""
+    reader = spark.read.option("mergeSchema", "true")
+    if base_path:
+        reader = reader.option("basePath", uri(base_path))
+    try:
+        report = Q.check(reader.parquet(uri(result_path)), table, pk)
+    except Q.DataQualityError as e:
+        save_quality(db, table, e.report)
+        for p in cleanup:
+            _rm(p)
+        raise
+    save_quality(db, table, report)
+    return report
+
+
 def stage(df: DataFrame, spark: SparkSession, db: str, table: str, append: bool = False) -> int:
     """writes the new rows next to the table (path.__stage) and returns how many rows the stage holds"""
     path = table_path(db, table) + ".__stage"
@@ -497,6 +528,8 @@ def commit(spark: SparkSession, db: str, table: str, pk: Optional[Sequence[str]]
             _rm(merged)
             _rm(staged)
             raise _quota_error(e, "upsert de %s.%s" % (db, table))
+    # quality checks on the result, before the live table is touched (card #9)
+    _quality_gate(spark, db, table, merged, pk, cleanup=[merged, staged] if merged != staged else [staged])
     _rm(path)
     fs().mv(merged, path, recursive=True)
     _rm(staged)
@@ -530,6 +563,9 @@ def commit_partitions(spark: SparkSession, db: str, table: str, part_col: str, p
             _rm(merged)
             _rm(staged)
             raise _quota_error(e, "partição %s=%s de %s.%s" % (part_col, v, db, table))
+    # quality checks on the rewritten partitions (the partition column comes back from the folder names)
+    if vals:
+        _quality_gate(spark, db, table, merged, pk, cleanup=[merged, staged], base_path=merged)
     for v in vals:
         _rm("%s/%s=%s" % (path, part_col, v))
         fs().makedirs(path, exist_ok=True)

@@ -11,6 +11,8 @@ from . import common as C
 
 FONTE = "anm_sigbm"
 TABLE = "anm_sigbm_barragem"
+# data quality (lakehouse/quality.py, card #9): checked before every commit
+C.Q.expect(TABLE, pk=["id_barragem"], pk_soft=True)  # one row per dam expected; to confirm on the real data
 URLS_PADRAO = ["https://dadosabertos.anm.gov.br/SIGBM/Barragens.csv"]
 
 SCHEMA = [("id_barragem", "string"), ("nome", "string"), ("nome_mina", "string"), ("tipo_empreendedor", "string"),

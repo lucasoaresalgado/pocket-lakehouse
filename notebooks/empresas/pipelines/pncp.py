@@ -103,6 +103,10 @@ DATASETS: Dict[str, dict] = {
         "api_extra_columns": [], "api_overrides": {}, "cpf_columns": ["ni_fornecedor"],
     },
 }
+
+# data quality (lakehouse/quality.py, card #9): checked before every commit
+for _spec in DATASETS.values():
+    C.Q.expect(_spec["table"], pk=_spec["pk"])
 CONTROL_COLUMNS = ["origem_carga", "arquivo_origem"]
 
 

@@ -11,6 +11,8 @@ from . import common as C
 
 FONTE = "anm_dipem"
 TABLE = "anm_dipem_investimento"
+# data quality (lakehouse/quality.py, card #9): checked before every commit
+C.Q.expect(TABLE, pk=["ano", "chave"])  # chave = h32 of the group-by columns: unique by construction
 URLS_PADRAO = ["https://dadosabertos.anm.gov.br/DIPEM/InvestimentoPesquisaMineralMunicipio.csv"]
 
 SCHEMA = [("ano", "int"), ("chave", "string"), ("uf", "string"), ("cod_ibge", "string"), ("municipio", "string"),

@@ -18,6 +18,8 @@ from lakehouse import core as C
 
 FONTE = "pgfn"
 TABLE = "pgfn_devedores"
+# data quality (lakehouse/quality.py, card #9): checked before every commit
+C.Q.expect(TABLE)  # no natural key (several debts per debtor): not empty only
 BASE_URL = "https://dadosabertos.pgfn.gov.br"
 DEBT_FILENAMES = {"nao_previdenciario": "Dados_abertos_Nao_Previdenciario.zip", "fgts": "Dados_abertos_FGTS.zip",
                   "previdenciario": "Dados_abertos_Previdenciario.zip"}

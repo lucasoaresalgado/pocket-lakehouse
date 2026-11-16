@@ -16,6 +16,9 @@ from . import common as C
 FONTE = "anp_poco"
 TABLE = "anp_producao_poco"
 VIEW = "anp_producao_instalacao"
+# data quality (lakehouse/quality.py, card #9): checked before every commit
+C.Q.expect(TABLE, pk=["ano_mes", "poco"])
+C.Q.expect(VIEW, pk=["ano_mes", "instalacao"])  # a group-by on these columns
 FIRST_YM = "2015-01"
 PAGINA_PADRAO = "https://www.gov.br/anp/pt-br/centrais-de-conteudo/dados-abertos/producao-de-petroleo-e-gas-natural-por-poco"
 NUM_COLS = ["oleo", "condensado", "petroleo", "gas_associado", "gas_nao_associado", "gas_total", "gas_royalties", "agua", "tempo_producao"]
