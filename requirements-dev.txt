@@ -1,0 +1,11 @@
+# What the offline tests and CI need, pinned (Python 3.10, like the project image).
+# The image itself still installs its packages unpinned (see the audit, card #7, W4).
+pyspark==3.5.9
+pandas==2.3.3
+numpy==2.2.6
+pyarrow==25.0.1
+py7zr==1.1.4
+openpyxl==3.1.5
+s3fs==2026.9.0
+fsspec==2026.9.0
+ruff==0.17.5

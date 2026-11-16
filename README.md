@@ -41,7 +41,7 @@ It is deliberately **monolithic**: one repository, one `docker compose` stack, o
 2. [Repository layout](#2-repository-layout)
 3. [Infrastructure (containers)](#3-infrastructure-containers)
 4. [Start, use and stop](#4-start-use-and-stop)
-5. [Adding a category](#5-adding-a-category)
+5. [Adding a category](#5-adding-a-category) · [Checks (CI)](#checks-ci)
 6. [Storage: MinIO and the disk quota](#6-storage-minio-and-the-disk-quota)
 7. [Environment variables](#7-environment-variables)
 8. [Hardware limits and troubleshooting](#8-hardware-limits-and-troubleshooting)
@@ -196,6 +196,32 @@ Read-only is enforced in three layers: MinIO denies writes to `mcp-reader` (`Acc
 filesystem is read-only too). Rows are capped (`MCP_ROW_LIMIT`, 1000) and queries stop after `MCP_TIMEOUT_S` (60 s).
 There is **no authentication** on the endpoint: it is published on `127.0.0.1` only, like Jupyter, so treat edit mode
 accordingly. Writes still hit the bucket's hard quota.
+
+---
+
+### Checks (CI)
+
+Every pull request to `main` runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml): `ruff` (errors only: syntax errors and
+undefined names, see `ruff.toml`) and the offline tests of each category, in Python 3.10 with Java 11 and PySpark 3.5.9, like
+the image. The MinIO integration test (`mineracao/tests/test_s3_storage.py`) is not part of CI: run it by hand against the stack.
+
+The same checks, locally:
+
+```bash
+# lint, on the host (ruff needs neither Java nor Spark)
+pip install ruff==0.17.5 && ruff check .
+
+# tests inside the Jupyter container (it already has Spark and Java)
+for c in mineracao clima empresas; do docker exec spark-jupyter bash -c "cd /notebooks/$c && python3 -m unittest tests.test_pipelines"; done
+
+# or on the host, with Java 11 and Python 3.10 installed
+pip install -r requirements-dev.txt
+ruff check .
+sudo mkdir -p /data && sudo chmod 777 /data          # the tests write their fixtures under /data/_test*
+for c in mineracao clima empresas; do (cd notebooks/$c && python -m unittest tests.test_pipelines); done
+```
+
+Run each category in its own process (as above): the pipelines fix `STORAGE` when they are imported.
 
 ---
 
